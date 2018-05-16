@@ -18,10 +18,14 @@ import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.widget.ImageView;
 
+import com.squareup.picasso.Picasso;
+
 import java.util.ArrayList;
 import java.util.List;
 
 import static android.support.v7.widget.RecyclerView.SCROLL_STATE_DRAGGING;
+import static android.support.v7.widget.RecyclerView.SCROLL_STATE_IDLE;
+import static android.support.v7.widget.RecyclerView.SCROLL_STATE_SETTLING;
 
 public class PhotoGalleryFragment extends Fragment {
 
@@ -29,8 +33,6 @@ public class PhotoGalleryFragment extends Fragment {
 
     private RecyclerView mPhotoRecyclerView;
     private List<GalleryItem> mItems = new ArrayList<>();
-    private ThumbnailDownloader<PhotoHolder> mThumbnailDownloader;
-    private boolean hasStartedScrolling = false;
 
     public static PhotoGalleryFragment newInstance() {
         return new PhotoGalleryFragment();
@@ -41,21 +43,6 @@ public class PhotoGalleryFragment extends Fragment {
         super.onCreate(savedInstanceState);
         setRetainInstance(true);
         new FetchItemsTask().execute();
-
-        Handler responseHandler = new Handler();
-        mThumbnailDownloader = new ThumbnailDownloader<>(responseHandler);
-        mThumbnailDownloader.setThumbnailDownloadListener(
-                new ThumbnailDownloader.ThumbnailDownloadListener<PhotoHolder>() {
-                    @Override
-                    public void onThumbnailDownload(PhotoHolder photoHolder, Bitmap bitmap) {
-                        Drawable drawable = new BitmapDrawable(getResources(), bitmap);
-                        photoHolder.bindDrawable(drawable);
-                    }
-                }
-        );
-        mThumbnailDownloader.start();
-        mThumbnailDownloader.getLooper();
-        Log.i(TAG, "Background thread started");
     }
 
     @Override
@@ -77,23 +64,21 @@ public class PhotoGalleryFragment extends Fragment {
                     new FetchItemsTask().execute();
                 }
 
-                if(!hasStartedScrolling && newState == SCROLL_STATE_DRAGGING){
-                    hasStartedScrolling = true;
-                }
-
-                // Preload previous 10 and next 10 gallery items
-                if (hasStartedScrolling && newState == ViewPager.SCROLL_STATE_IDLE) {
-                    hasStartedScrolling = false;
-                    int firstVisible = ((GridLayoutManager) mPhotoRecyclerView.getLayoutManager())
+                if (newState == SCROLL_STATE_IDLE) {
+                    int firstVisible = ((GridLayoutManager) recyclerView.getLayoutManager())
                             .findFirstVisibleItemPosition();
                     for (int i = firstVisible; i > firstVisible - 10 && i >= 0; i--) {
-                        cacheGalleryItemImage(i);
+                        Picasso.get()
+                                .load(mItems.get(i).getUrl())
+                                .fetch();
                     }
 
-                    int lastVisible = ((GridLayoutManager) mPhotoRecyclerView.getLayoutManager())
+                    int lastVisible = ((GridLayoutManager) recyclerView.getLayoutManager())
                             .findLastVisibleItemPosition();
                     for (int i = lastVisible; i < lastVisible + 10 && i < mItems.size(); i++) {
-                        cacheGalleryItemImage(i);
+                        Picasso.get()
+                                .load(mItems.get(i).getUrl())
+                                .fetch();
                     }
                 }
             }
@@ -118,29 +103,6 @@ public class PhotoGalleryFragment extends Fragment {
         return v;
     }
 
-    @Override
-    public void onDestroyView() {
-        super.onDestroyView();
-        mThumbnailDownloader.clearQueue(); // Avoid hanging onto invalid photoHolders on rotation
-    }
-
-    @Override
-    public void onDestroy() {
-        super.onDestroy();
-        mThumbnailDownloader.quit();
-        Log.i(TAG, "Background thread destroyed");
-    }
-
-    private void cacheGalleryItemImage(int i) {
-        GalleryItem galleryItem = mItems.get(i);
-        if (galleryItem.getUrl() != null) {
-            Bitmap bitmap = mThumbnailDownloader.bitmapCache.get(galleryItem.getUrl());
-            if (bitmap == null) {
-                mThumbnailDownloader.queueThumbnail(galleryItem.getUrl());
-            }
-        }
-    }
-
     private void updateAdapter() {
         if (isAdded()) { // Needed because this fragment is retained
             if (mPhotoRecyclerView.getAdapter() != null) {
@@ -160,8 +122,11 @@ public class PhotoGalleryFragment extends Fragment {
             mItemImageView = (ImageView) itemView.findViewById(R.id.item_image_view);
         }
 
-        public void bindDrawable(Drawable drawable) {
-            mItemImageView.setImageDrawable(drawable);
+        public void bindGalleryItem(GalleryItem galleryItem) {
+            Picasso.get()
+                    .load(galleryItem.getUrl())
+                    .placeholder(R.drawable.downloading)
+                    .into(mItemImageView);
         }
     }
 
@@ -183,19 +148,7 @@ public class PhotoGalleryFragment extends Fragment {
         @Override
         public void onBindViewHolder(PhotoHolder holder, int position) {
             GalleryItem galleryItem = mGalleryItems.get(position);
-            // Check if image is already in cache
-            Bitmap bitmap = null;
-            if (galleryItem.getUrl() != null) {
-                bitmap = mThumbnailDownloader.bitmapCache.get(galleryItem.getUrl());
-            }
-            if (bitmap == null) {
-                Drawable placeHolder = getResources().getDrawable(R.drawable.downloading);
-                holder.bindDrawable(placeHolder);
-                mThumbnailDownloader.queueThumbnail(holder, galleryItem.getUrl());
-            } else {
-                holder.bindDrawable(new BitmapDrawable(getResources(), bitmap));
-            }
-
+            holder.bindGalleryItem(galleryItem);
         }
 
         @Override
