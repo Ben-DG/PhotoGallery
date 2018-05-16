@@ -5,9 +5,11 @@ import android.os.Bundle;
 import android.support.v4.app.Fragment;
 import android.support.v7.widget.GridLayoutManager;
 import android.support.v7.widget.RecyclerView;
+import android.util.TypedValue;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.widget.TextView;
 
 import java.util.ArrayList;
@@ -36,18 +38,45 @@ public class PhotoGalleryFragment extends Fragment {
         View v = inflater.inflate(R.layout.fragment_photo_gallery, container, false);
 
         mPhotoRecyclerView = (RecyclerView) v.findViewById(R.id.photo_recycler_view);
-        mPhotoRecyclerView.setLayoutManager(new GridLayoutManager(getActivity(), 3));
-
-        setupAdapter(); // Called here so every time a new RecyclerView is created it is
+        updateAdapter(); // Called here so every time a new RecyclerView is created it is
         // reconfigured with the appropriate adapter. Also want to call every time the set of model
         // objects changes.
+        mPhotoRecyclerView.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrollStateChanged(RecyclerView recyclerView, int newState) {
+                super.onScrollStateChanged(recyclerView, newState);
+
+                if (!recyclerView.canScrollVertically(1)) {
+                    new FetchItemsTask().execute();
+                }
+            }
+        });
+        mPhotoRecyclerView.getViewTreeObserver()
+                .addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
+                    @Override
+                    public void onGlobalLayout() {
+                        float columnWidthInPixels = TypedValue.applyDimension
+                                (TypedValue.COMPLEX_UNIT_DIP, 140,
+                                        getActivity().getResources().getDisplayMetrics());
+                        int width = mPhotoRecyclerView.getWidth();
+                        int numCols = Math.round(width / columnWidthInPixels);
+                        mPhotoRecyclerView.setLayoutManager
+                                (new GridLayoutManager(getActivity(), numCols));
+                        mPhotoRecyclerView.getViewTreeObserver()
+                                .removeOnGlobalLayoutListener(this);
+                    }
+                });
 
         return v;
     }
 
-    private void setupAdapter() {
+    private void updateAdapter() {
         if (isAdded()) { // Needed because this fragment is retained
-            mPhotoRecyclerView.setAdapter(new PhotoAdapter(mItems));
+            if (mPhotoRecyclerView.getAdapter() != null) {
+                mPhotoRecyclerView.getAdapter().notifyDataSetChanged();
+            } else {
+                mPhotoRecyclerView.setAdapter(new PhotoAdapter(mItems));
+            }
         }
     }
 
@@ -100,8 +129,8 @@ public class PhotoGalleryFragment extends Fragment {
 
         @Override // This method is run on the main thread so it is safe to update UI
         protected void onPostExecute(List<GalleryItem> items) {
-            mItems = items;
-            setupAdapter();
+            mItems.addAll(items);
+            updateAdapter();
         }
     }
 }
