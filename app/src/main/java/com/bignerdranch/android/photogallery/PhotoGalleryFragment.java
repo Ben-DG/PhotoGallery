@@ -7,6 +7,7 @@ import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
 import android.support.v4.app.Fragment;
+import android.support.v4.view.ViewPager;
 import android.support.v7.widget.GridLayoutManager;
 import android.support.v7.widget.RecyclerView;
 import android.util.Log;
@@ -20,6 +21,8 @@ import android.widget.ImageView;
 import java.util.ArrayList;
 import java.util.List;
 
+import static android.support.v7.widget.RecyclerView.SCROLL_STATE_DRAGGING;
+
 public class PhotoGalleryFragment extends Fragment {
 
     private static final String TAG = "PhotoGalleryFragment";
@@ -27,6 +30,7 @@ public class PhotoGalleryFragment extends Fragment {
     private RecyclerView mPhotoRecyclerView;
     private List<GalleryItem> mItems = new ArrayList<>();
     private ThumbnailDownloader<PhotoHolder> mThumbnailDownloader;
+    private boolean hasStartedScrolling = false;
 
     public static PhotoGalleryFragment newInstance() {
         return new PhotoGalleryFragment();
@@ -72,6 +76,26 @@ public class PhotoGalleryFragment extends Fragment {
                 if (!recyclerView.canScrollVertically(1)) {
                     new FetchItemsTask().execute();
                 }
+
+                if(!hasStartedScrolling && newState == SCROLL_STATE_DRAGGING){
+                    hasStartedScrolling = true;
+                }
+
+                // Preload previous 10 and next 10 gallery items
+                if (hasStartedScrolling && newState == ViewPager.SCROLL_STATE_IDLE) {
+                    hasStartedScrolling = false;
+                    int firstVisible = ((GridLayoutManager) mPhotoRecyclerView.getLayoutManager())
+                            .findFirstVisibleItemPosition();
+                    for (int i = firstVisible; i > firstVisible - 10 && i >= 0; i--) {
+                        cacheGalleryItemImage(i);
+                    }
+
+                    int lastVisible = ((GridLayoutManager) mPhotoRecyclerView.getLayoutManager())
+                            .findLastVisibleItemPosition();
+                    for (int i = lastVisible; i < lastVisible + 10 && i < mItems.size(); i++) {
+                        cacheGalleryItemImage(i);
+                    }
+                }
             }
         });
         mPhotoRecyclerView.getViewTreeObserver()
@@ -105,6 +129,16 @@ public class PhotoGalleryFragment extends Fragment {
         super.onDestroy();
         mThumbnailDownloader.quit();
         Log.i(TAG, "Background thread destroyed");
+    }
+
+    private void cacheGalleryItemImage(int i) {
+        GalleryItem galleryItem = mItems.get(i);
+        if (galleryItem.getUrl() != null) {
+            Bitmap bitmap = mThumbnailDownloader.bitmapCache.get(galleryItem.getUrl());
+            if (bitmap == null) {
+                mThumbnailDownloader.queueThumbnail(galleryItem.getUrl());
+            }
+        }
     }
 
     private void updateAdapter() {
@@ -150,9 +184,12 @@ public class PhotoGalleryFragment extends Fragment {
         public void onBindViewHolder(PhotoHolder holder, int position) {
             GalleryItem galleryItem = mGalleryItems.get(position);
             // Check if image is already in cache
-            Bitmap bitmap = mThumbnailDownloader.bitmapCache.get(galleryItem.getUrl());
+            Bitmap bitmap = null;
+            if (galleryItem.getUrl() != null) {
+                bitmap = mThumbnailDownloader.bitmapCache.get(galleryItem.getUrl());
+            }
             if (bitmap == null) {
-                Drawable placeHolder = getResources().getDrawable(R.drawable.bill_up_close);
+                Drawable placeHolder = getResources().getDrawable(R.drawable.downloading);
                 holder.bindDrawable(placeHolder);
                 mThumbnailDownloader.queueThumbnail(holder, galleryItem.getUrl());
             } else {
